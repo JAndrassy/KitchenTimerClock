@@ -13,13 +13,14 @@ const byte DISPLAY_SCLK_PIN = 6;
 const byte LDR_PIN = A2;
 
 const byte ENCODER_PULSES_PER_STEP = 4;
-const unsigned long DISPLAY_REFRESH_INTERVAL = 100; // milliseconds
-const unsigned long LONG_PUSH_INTERVAL = 3000; // miliseconds
-const unsigned long SET_TIME_BLINK_MILLIS = 250;
-const unsigned long ALARM_BLINK_MILLIS = 700;
-const unsigned long BELL_REPEAT_INTERVAL = 60000; // miliseconds
-const unsigned long TIMER_DISPLAY_TIMEOUT = 60000; // miliseconds
-const unsigned long MINUTE_MILIS = 60000;
+const unsigned DISPLAY_REFRESH_INTERVAL = 100; // milliseconds
+const unsigned LONG_PUSH_INTERVAL = 3000; // miliseconds
+const unsigned SET_TIME_BLINK_MILLIS = 250;
+const unsigned ALARM_BLINK_MILLIS = 700;
+const unsigned BELL_REPEAT_INTERVAL = 60000; // miliseconds
+const unsigned TIMER_DISPLAY_TIMEOUT = 60000; // miliseconds
+const unsigned MINUTE_MILIS = 60000 - 6;
+const unsigned CLOCK_MILIS_CORRECTION_PER_HOUR = 41;
 
 enum {
   CLOCK,
@@ -38,14 +39,14 @@ byte clockHour = 0;
 byte clockMinute = 0;
 bool rtcPresent = true;
 unsigned long minuteMillis;
-uint16_t timerSeconds = 0;
+unsigned timerSeconds = 0;
 byte displayData[4];
 
 void setup() {
   button.attach(BUTTON_PIN, INPUT_PULLUP);
   pinMode(LED_BUILTIN, OUTPUT);
   Wire.begin();
-  syncClock();
+  loadRTCTime();
 }
 
 void loop() {
@@ -54,7 +55,7 @@ void loop() {
   static unsigned long displayRefreshMillis;
   static unsigned long displayTimeoutMillis;
   static unsigned long alarmStartMillis;
-  static unsigned long timerStartSeconds;
+  static unsigned timerStartSeconds;
   static byte blink;
   static byte state = CLOCK;
 
@@ -78,9 +79,8 @@ void loop() {
     } else {
       clockMinute = 0;
       clockHour = (clockHour < 23) ? (clockHour + 1) : 0;
-      if (clockHour == 0) {
-        syncClock();
-      }
+      minuteMillis -= CLOCK_MILIS_CORRECTION_PER_HOUR;
+      saveTimeToRTC();
     }
   }
 
@@ -125,7 +125,7 @@ void loop() {
       }
     } else {
       displayTimeoutMillis = 0; // reset timeout
-      int step;
+      byte step;
       if (timerSeconds + dir > 6 * 60) {
         step = 60;
       } else if (timerSeconds + dir > 3 * 60) {
@@ -138,22 +138,24 @@ void loop() {
         step = 5;
       }
       if (dir > 0) {
-        if (timerSeconds < 6000) { // 100 minutes
-          if (state != COUNTDOWN) {
-            step = step - (timerSeconds % step);
-          }
+        if (state != COUNTDOWN) {
+          step = step - (timerSeconds % step);
+        }
+        if (timerSeconds + step < 6000) { // 100 minutes
           timerSeconds += step;
           showTimer();
         }
-      } else if (timerSeconds > 0) {
+      } else {
         if (state != COUNTDOWN) {
           int m = timerSeconds % step;
           if (m != 0) {
             step = m;
           }
         }
-        timerSeconds -= step;
-        showTimer();
+        if (timerSeconds >= step) {
+          timerSeconds -= step;
+          showTimer();
+        }
       }
       if (state != COUNTDOWN && dir > 0) {
         state = SET_TIMER;
@@ -192,12 +194,7 @@ void loop() {
       case SET_MINUTE:
         state = CLOCK;
         minuteMillis = millis();
-        if (rtcPresent) {
-          DS3231 rtc;
-          rtc.setSecond(0);
-          rtc.setMinute(clockMinute);
-          rtc.setHour(clockHour);
-        }
+        saveTimeToRTC();
         break;
       case CLOCK:
         state = SET_TIMER;
@@ -210,7 +207,6 @@ void loop() {
         state = SET_TIMER;
         timerSeconds = timerStartSeconds;
         showTimer();
-        noToneAC();
         break;
       case SET_TIMER:
         if (timerSeconds > 0) {
@@ -245,12 +241,6 @@ void loop() {
     if (currentMillis - previousMillis >= ALARM_BLINK_MILLIS) {
       previousMillis = currentMillis;
       blink = !blink;
-      if (blink) {
-        showTimer();
-      } else {
-        byte digitBuffer[] = {0, 0, 0, 0};
-        refreshDisplay(digitBuffer, false, false, false);
-      }
     }
     bool resetBell = false;
     if (currentMillis - alarmStartMillis > BELL_REPEAT_INTERVAL || !alarmStartMillis) {
@@ -265,8 +255,8 @@ void loop() {
     displayRefreshMillis = currentMillis;
     static int lastLDRReading = 1300; // init out of range
     if (state == ALARM) {
-      display.setBrightness(7, true);
-      lastLDRReading = 0;
+      display.setBrightness(7, blink);
+      lastLDRReading = 1300;
     } else {
       int a = analogRead(LDR_PIN);
       if (abs(a - lastLDRReading) > 20) {
@@ -280,7 +270,7 @@ void loop() {
 
 }
 
-void syncClock() {
+void loadRTCTime() {
   DateTime now = RTClib::now();
   if (now.hour() > 23) {
     rtcPresent = false;
@@ -289,6 +279,15 @@ void syncClock() {
   clockHour = now.hour();
   clockMinute = now.minute();
   minuteMillis = millis() - (1000L * now.second());
+}
+
+void saveTimeToRTC() {
+  if (!rtcPresent)
+    return;
+  DS3231 rtc;
+  rtc.setSecond(0);
+  rtc.setMinute(clockMinute);
+  rtc.setHour(clockHour);
 }
 
 void showClock(bool showColon, bool showHour, bool showMinute) {
@@ -349,15 +348,14 @@ void bellSound(bool restart) {
 
   if (restart) {
     count = 0;
+    volume = VOLUME_STEPS;
   }
-  if (count == REPEAT_COUNT) {
-    noToneAC();
+  if (count == REPEAT_COUNT)
     return;
-  }
   unsigned long currentMillis = millis();
   if (currentMillis - previousMillis > STEP_LENGTH) {
     previousMillis = currentMillis;
-    toneAC(BELL_FREQUENCY, volume);
+    toneAC(BELL_FREQUENCY, volume, STEP_LENGTH * 2, true);
     volume--;
     if (volume == 0) {
       volume = VOLUME_STEPS;
