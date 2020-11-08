@@ -21,6 +21,7 @@ const unsigned BELL_REPEAT_INTERVAL = 60000; // miliseconds
 const unsigned TIMER_DISPLAY_TIMEOUT = 60000; // miliseconds
 const unsigned MINUTE_MILIS = 60000 - 6;
 const unsigned CLOCK_MILIS_CORRECTION_PER_HOUR = 41;
+const unsigned LDR_MAX_LIGHT = 150; // max for max display brightness
 
 enum {
   CLOCK,
@@ -258,10 +259,15 @@ void loop() {
       display.setBrightness(7, blink);
       lastLDRReading = 1300;
     } else {
-      int a = analogRead(LDR_PIN);
-      if (abs(a - lastLDRReading) > 20) {
+      unsigned a = analogRead(LDR_PIN);
+      if (abs(a - lastLDRReading) > 10) {
         lastLDRReading = a;
-        byte brightness = map(a, 0, 1024, 1, 8);
+        byte brightness;
+        if (a > LDR_MAX_LIGHT) {
+          brightness = 7;
+        } else {
+          brightness = map(a, 0, LDR_MAX_LIGHT, 2, 7);
+        }
         display.setBrightness(brightness, true);
       }
     }
