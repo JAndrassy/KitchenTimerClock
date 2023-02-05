@@ -30,6 +30,3 @@ On the photo of the back side there are still jumper wires to USB adapter on sur
 * Long push in clock mode starts the clock time setting mode.
 * Long push time is 3 seconds.
 * All possible actions are shown in the states diagram.
-
-<a href="https://www.buymeacoffee.com/jurajandraY" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 60px !important;width: 217px !important;" ></a>
-
